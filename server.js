@@ -8,7 +8,7 @@ const {
   verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
 
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -124,7 +124,8 @@ http.createServer(async function (request, response) {
       }
 
       const rpName = 'Coffee Tec';
-      const rpID = 'localhost';
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
       const options = await generateRegistrationOptions({
         rpName,
         rpID,
@@ -165,8 +166,9 @@ http.createServer(async function (request, response) {
         }
       }
 
-      const rpID = 'localhost';
-      const origin = 'http://localhost:8000';
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
       const verification = await verifyRegistrationResponse({
         response: body,
         expectedChallenge,
@@ -221,7 +223,8 @@ http.createServer(async function (request, response) {
         return;
       }
 
-      const rpID = 'localhost';
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
       const options = await generateAuthenticationOptions({
         rpID,
         allowCredentials: credentials.map(cred => ({
@@ -261,8 +264,9 @@ http.createServer(async function (request, response) {
         return;
       }
 
-      const rpID = 'localhost';
-      const origin = 'http://localhost:8000';
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
       const verification = await verifyAuthenticationResponse({
         response: body,
         expectedChallenge,

@@ -227,11 +227,6 @@ http.createServer(async function (request, response) {
       const rpID = host.split(':')[0];
       const options = await generateAuthenticationOptions({
         rpID,
-        allowCredentials: credentials.map(cred => ({
-          id: cred.credentialID,
-          type: 'public-key',
-          transports: cred.transports,
-        })),
         userVerification: 'preferred',
       });
 

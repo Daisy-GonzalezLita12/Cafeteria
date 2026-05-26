@@ -322,6 +322,78 @@ http.createServer(async function (request, response) {
     return;
   }
 
+  // PUT /api/products/:id (Update Product)
+  if (request.url.match(/^\/api\/products\/\d+$/) && request.method === 'PUT') {
+    const authHeader = request.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token || token !== activeAdminToken) {
+      response.writeHead(401, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    try {
+      const id = parseInt(request.url.split('/').pop());
+      const body = await parseBody(request);
+      const products = readJson(PRODUCTS_FILE);
+
+      const index = products.findIndex(p => p.id === id);
+      if (index === -1) {
+        response.writeHead(404, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Product not found' }));
+        return;
+      }
+
+      products[index] = { 
+        ...products[index], 
+        name: body.name || products[index].name,
+        price: body.price || products[index].price,
+        desc: body.desc || products[index].desc,
+        icon: body.icon || products[index].icon
+      };
+      writeJson(PRODUCTS_FILE, products);
+
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ success: true, product: products[index] }));
+    } catch (e) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Invalid Request' }));
+    }
+    return;
+  }
+
+  // DELETE /api/products/:id (Delete Product)
+  if (request.url.match(/^\/api\/products\/\d+$/) && request.method === 'DELETE') {
+    const authHeader = request.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token || token !== activeAdminToken) {
+      response.writeHead(401, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    try {
+      const id = parseInt(request.url.split('/').pop());
+      const products = readJson(PRODUCTS_FILE);
+
+      const newProducts = products.filter(p => p.id !== id);
+      if (products.length === newProducts.length) {
+        response.writeHead(404, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Product not found' }));
+        return;
+      }
+
+      writeJson(PRODUCTS_FILE, newProducts);
+
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Invalid Request' }));
+    }
+    return;
+  }
+
   // GET /api/orders
   if (request.url === '/api/orders' && request.method === 'GET') {
     const authHeader = request.headers['authorization'];

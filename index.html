@@ -557,6 +557,7 @@
 
             <h3>📝 Registrar Nuevo Producto</h3>
             <form id="productForm" onsubmit="handleRegisterProduct(event)">
+                <input type="hidden" name="id" id="productId">
                 <div class="form-group">
                     <label>Nombre</label>
                     <input type="text" name="name" class="form-input" required placeholder="Ej: Tacos de Canasta">
@@ -574,8 +575,30 @@
                     <label>Descripción</label>
                     <input type="text" name="desc" class="form-input" required placeholder="Descripción corta...">
                 </div>
-                <button type="submit" class="btn-buy">Guardar Producto</button>
+                <div style="display: flex; gap: 1rem;">
+                    <button type="submit" class="btn-buy" id="btnSaveProduct">Guardar Producto</button>
+                    <button type="button" class="btn-disconnect" id="btnCancelEdit" style="display:none;" onclick="cancelEdit()">Cancelar</button>
+                </div>
             </form>
+
+            <hr style="margin: 2rem 0; border: 0; border-top: 1px solid #e2e8f0;">
+
+            <h3>📦 Gestionar Productos</h3>
+            <div style="overflow-x: auto;">
+                <table class="table" id="adminProductsTable">
+                    <thead>
+                        <tr>
+                            <th>Icono</th>
+                            <th>Nombre</th>
+                            <th>Precio</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="4">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
 
             <hr style="margin: 2rem 0; border: 0; border-top: 1px solid #e2e8f0;">
 
@@ -788,6 +811,7 @@
         function showAdminContent() {
             document.getElementById('adminLoginScreen').style.display = 'none';
             document.getElementById('adminContent').style.display = 'block';
+            loadAdminProducts();
         }
 
         function showAdminLogin() {
@@ -834,10 +858,12 @@
                 icon: form.icon.value,
                 desc: form.desc.value
             };
+            const id = form.id.value;
+            const isEdit = !!id;
 
             try {
-                const res = await fetch(`${API_URL}/products`, {
-                    method: 'POST',
+                const res = await fetch(isEdit ? `${API_URL}/products/${id}` : `${API_URL}/products`, {
+                    method: isEdit ? 'PUT' : 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
@@ -850,15 +876,85 @@
                     return showToast('Sesión expirada. Vuelve a autenticarte.', 'error');
                 }
                 if (res.ok) {
-                    showToast("Producto registrado exitosamente", "success");
-                    form.reset();
-                    fetchProducts();
+                    showToast(isEdit ? "Producto actualizado" : "Producto registrado exitosamente", "success");
+                    cancelEdit();
+                    await fetchProducts();
+                    loadAdminProducts();
                 } else {
                     throw new Error("Error del servidor");
                 }
             } catch (e) {
                 showToast("Error al guardar producto: " + e.message, "error");
             }
+        }
+
+        function cancelEdit() {
+            const form = document.getElementById('productForm');
+            form.reset();
+            form.id.value = '';
+            document.getElementById('btnSaveProduct').innerText = 'Guardar Producto';
+            document.getElementById('btnCancelEdit').style.display = 'none';
+        }
+
+        function editProduct(id) {
+            const product = PRODUCTS.find(p => p.id === id);
+            if (!product) return;
+            const form = document.getElementById('productForm');
+            form.id.value = product.id;
+            form.name.value = product.name;
+            form.price.value = product.price;
+            form.icon.value = product.icon;
+            form.desc.value = product.desc;
+            
+            document.getElementById('btnSaveProduct').innerText = 'Actualizar Producto';
+            document.getElementById('btnCancelEdit').style.display = 'block';
+            
+            document.getElementById('adminPanel').scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        async function deleteProduct(id) {
+            if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+            
+            const token = getAdminToken();
+            if (!token) return showToast('No autorizado', 'error');
+
+            try {
+                const res = await fetch(`${API_URL}/products/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (res.ok) {
+                    showToast('Producto eliminado', 'success');
+                    await fetchProducts();
+                    loadAdminProducts();
+                } else {
+                    showToast('Error eliminando producto', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        function loadAdminProducts() {
+            const tbody = document.querySelector('#adminProductsTable tbody');
+            if (!tbody) return;
+            
+            if (PRODUCTS.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4">No hay productos.</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = PRODUCTS.map(p => `
+                <tr>
+                    <td style="font-size: 1.5rem">${p.icon}</td>
+                    <td>${p.name}</td>
+                    <td>${p.price} XLM</td>
+                    <td>
+                        <button onclick="editProduct(${p.id})" style="background:var(--primary);color:white;border:none;padding:0.25rem 0.5rem;border-radius:4px;cursor:pointer;margin-right:0.25rem;font-weight:bold;">Editar</button>
+                        <button onclick="deleteProduct(${p.id})" style="background:#e53e3e;color:white;border:none;padding:0.25rem 0.5rem;border-radius:4px;cursor:pointer;font-weight:bold;">Eliminar</button>
+                    </td>
+                </tr>
+            `).join('');
         }
 
         async function loadSales() {

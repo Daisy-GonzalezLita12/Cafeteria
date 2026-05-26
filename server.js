@@ -136,6 +136,7 @@ http.createServer(async function (request, response) {
         authenticatorSelection: {
           residentKey: 'required',
           userVerification: 'preferred',
+          authenticatorAttachment: 'platform',
         },
       });
 

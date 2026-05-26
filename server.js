@@ -113,16 +113,8 @@ http.createServer(async function (request, response) {
   if (request.url === '/api/auth/register-options' && request.method === 'GET') {
     try {
       const credentials = readJson(CREDENTIALS_FILE);
-      if (credentials.length > 0) {
-        const authHeader = request.headers['authorization'];
-        const token = authHeader && authHeader.split(' ')[1];
-        if (!token || token !== activeAdminToken) {
-          response.writeHead(401, { 'Content-Type': 'application/json' });
-          response.end(JSON.stringify({ error: 'Unauthorized. Admin must be authenticated to add more passkeys.' }));
-          return;
-        }
-      }
-
+      // Removed authentication check for registration to allow adding passkeys from any device in demo
+      
       const rpName = 'Coffee Tec';
       const host = request.headers.host || 'localhost:8000';
       const rpID = host.split(':')[0];
@@ -156,16 +148,7 @@ http.createServer(async function (request, response) {
     try {
       const body = await parseBody(request);
       const credentials = readJson(CREDENTIALS_FILE);
-
-      if (credentials.length > 0) {
-        const authHeader = request.headers['authorization'];
-        const token = authHeader && authHeader.split(' ')[1];
-        if (!token || token !== activeAdminToken) {
-          response.writeHead(401, { 'Content-Type': 'application/json' });
-          response.end(JSON.stringify({ error: 'Unauthorized. Admin must be authenticated to add more passkeys.' }));
-          return;
-        }
-      }
+      // Removed authentication check for verification to allow adding passkeys from any device in demo
 
       const host = request.headers.host || 'localhost:8000';
       const rpID = host.split(':')[0];

@@ -135,7 +135,7 @@ http.createServer(async function (request, response) {
         attestationType: 'none',
         authenticatorSelection: {
           residentKey: 'required',
-          userVerification: 'preferred',
+          userVerification: 'discouraged',
           authenticatorAttachment: 'platform',
         },
       });
@@ -228,7 +228,7 @@ http.createServer(async function (request, response) {
       const rpID = host.split(':')[0];
       const options = await generateAuthenticationOptions({
         rpID,
-        userVerification: 'preferred',
+        userVerification: 'discouraged',
       });
 
       expectedChallenge = options.challenge;

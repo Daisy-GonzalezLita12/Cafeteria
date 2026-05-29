@@ -493,7 +493,7 @@
                 <span id="walletAddress"></span>
             </div>
             <button id="btnDisconnect" class="btn-disconnect" onclick="desconectarWallet()">Desconectar</button>
-            <button id="btnConnect" class="btn-connect" onclick="conectarFreighter()">
+            <button id="btnConnect" class="btn-connect" onclick="abrirWalletModal()">
                 <span class="btn-text">Conectar Wallet</span>
                 <div class="spinner" id="connectSpinner"></div>
             </button>
@@ -631,6 +631,27 @@
         </div>
     </div>
 
+    <!-- Wallet Modal -->
+    <div id="walletModal" class="admin-panel">
+        <button onclick="cerrarWalletModal()" class="btn-close-admin">✕</button>
+        <h2 style="margin-top: 0;">👛 Conectar Wallet</h2>
+        
+        <div id="walletLoginScreen" style="text-align: center; padding: 1rem 0;">
+            <span class="passkey-icon">🔐</span>
+            <h3 style="margin:0 0 0.5rem">Acceso con Passkey</h3>
+            <p style="color:#718096;font-size:0.9rem;margin-bottom:1.25rem">Usa tu huella o Face ID para conectar tu wallet sin contraseñas.</p>
+            <button class="btn-passkey" onclick="walletPasskeyLogin()">
+                🛡️ Conectar Wallet (Passkey)
+            </button>
+            <div class="passkey-divider" id="walletRegisterHint">
+                — ¿Primera vez? —
+            </div>
+            <button class="btn-passkey register" onclick="walletPasskeyRegister()">
+                ➕ Crear Nueva Wallet
+            </button>
+        </div>
+    </div>
+
     <script>
         // ==========================================
         // CONFIGURATION
@@ -645,7 +666,16 @@
         // STATE & UI HELPERS
         // ==========================================
         let currentUser = null;
+        let currentWalletSecret = null;
         let isDevMode = false;
+
+        function abrirWalletModal() {
+            document.getElementById('walletModal').classList.add('active');
+        }
+
+        function cerrarWalletModal() {
+            document.getElementById('walletModal').classList.remove('active');
+        }
 
         async function fetchProducts() {
             try {
@@ -807,6 +837,128 @@
                 }
             }
         }
+
+        async function walletPasskeyRegister() {
+            try {
+                showToast('Generando Wallet y Passkey...', 'info');
+                const optRes = await fetch('/api/wallet/register-options');
+                if (!optRes.ok) throw new Error(await optRes.text());
+                const options = await optRes.json();
+
+                options.challenge = base64urlToBuffer(options.challenge);
+                options.user.id = base64urlToBuffer(options.user.id);
+
+                showToast('Activa tu autenticador...', 'info');
+                const credential = await navigator.credentials.create({ publicKey: options });
+
+                // Check if StellarSdk is available to create a random keypair
+                if (typeof window.StellarSdk === 'undefined') {
+                    throw new Error("StellarSdk no está disponible");
+                }
+                const keypair = window.StellarSdk.Keypair.random();
+                const publicKey = keypair.publicKey();
+                const secretKey = keypair.secret();
+
+                const regBody = {
+                    passkeyResponse: {
+                        id: credential.id,
+                        rawId: bufferToBase64url(credential.rawId),
+                        type: credential.type,
+                        response: {
+                            clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                            attestationObject: bufferToBase64url(credential.response.attestationObject),
+                            transports: credential.response.getTransports ? credential.response.getTransports() : []
+                        }
+                    },
+                    walletPublicKey: publicKey,
+                    walletSecretKey: secretKey
+                };
+
+                const verRes = await fetch('/api/wallet/register-verification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(regBody)
+                });
+                const verData = await verRes.json();
+                
+                if (verData.verified) {
+                    currentWalletSecret = verData.secretKey;
+                    updateWalletUI(verData.publicKey);
+                    cerrarWalletModal();
+                    showToast('✅ Wallet creada y conectada', 'success');
+                    
+                    // Fund account automatically on testnet (friendbot)
+                    showToast('Fondeando la nueva cuenta con Friendbot...', 'info');
+                    fetch(`https://friendbot.stellar.org?addr=${verData.publicKey}`)
+                        .then(() => console.log("Cuenta fondeada con éxito"))
+                        .catch(e => console.error("Error al fondear", e));
+                } else {
+                    showToast('Error: ' + verData.error, 'error');
+                }
+            } catch (e) {
+                console.error(e);
+                if (e.name === 'NotAllowedError') {
+                    showToast('Autenticación cancelada por el usuario o dispositivo no compatible.', 'error');
+                } else {
+                    showToast('Error al crear wallet: ' + e.message, 'error');
+                }
+            }
+        }
+
+        async function walletPasskeyLogin() {
+            try {
+                showToast('Conectando con Passkey...', 'info');
+                const optRes = await fetch('/api/wallet/login-options');
+                if (!optRes.ok) {
+                    return showToast('No hay wallets registradas en este dispositivo.', 'info');
+                }
+                const options = await optRes.json();
+                options.challenge = base64urlToBuffer(options.challenge);
+                if (options.allowCredentials) {
+                    options.allowCredentials = options.allowCredentials.map(c => ({
+                        ...c, id: base64urlToBuffer(c.id)
+                    }));
+                }
+
+                showToast('Activa tu autenticador...', 'info');
+                const assertion = await navigator.credentials.get({ publicKey: options });
+
+                const authBody = {
+                    id: assertion.id,
+                    rawId: bufferToBase64url(assertion.rawId),
+                    type: assertion.type,
+                    response: {
+                        clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+                        authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+                        signature: bufferToBase64url(assertion.response.signature)
+                    }
+                };
+
+                const verRes = await fetch('/api/wallet/login-verification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(authBody)
+                });
+                const verData = await verRes.json();
+
+                if (verData.verified) {
+                    currentWalletSecret = verData.secretKey;
+                    updateWalletUI(verData.publicKey);
+                    cerrarWalletModal();
+                    showToast('✅ Wallet conectada', 'success');
+                } else {
+                    showToast('Error: ' + verData.error, 'error');
+                }
+            } catch (e) {
+                console.error(e);
+                if (e.name === 'NotAllowedError') {
+                    showToast('Autenticación cancelada por el usuario o dispositivo no compatible.', 'error');
+                } else {
+                    showToast('Error al conectar: ' + e.message, 'error');
+                }
+            }
+        }
+
 
         function showAdminContent() {
             document.getElementById('adminLoginScreen').style.display = 'none';
@@ -1088,6 +1240,7 @@
         // ==========================================
         function desconectarWallet() {
             currentUser = null;
+            currentWalletSecret = null;
             updateWalletUI(null);
             showToast("Wallet desconectada", "info");
         }
@@ -1148,7 +1301,6 @@
         // ==========================================
 
         // Stub inicial
-        window.conectarFreighter = async () => alert("Cargando...");
         window.iniciarCompra = async () => alert("Cargando...");
 
         // Initial Fetch
@@ -1159,59 +1311,18 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/10.4.1/stellar-sdk.min.js"></script>
 
     <script type="module">
-        // Carga dinámica robusta
         try {
-            // Cargar Freighter (ESM)
-            const freighterModule = await import("https://cdn.jsdelivr.net/npm/@stellar/freighter-api@1.7.0/+esm");
-            const freighter = freighterModule.default && freighterModule.default.isConnected ? freighterModule.default : freighterModule;
-
             // Verificar StellarSdk (Global)
             if (typeof window.StellarSdk === 'undefined') {
                 throw new Error("StellarSdk no cargó correctamente");
             }
             const StellarSdk = window.StellarSdk;
 
-            if (typeof freighter.isConnected !== 'function') throw new Error("API incompleta");
-
-            console.log("✅ Librerías listas");
-
-            // --- CONEXIÓN ---
-            window.conectarFreighter = async function () {
-                const btn = document.getElementById('btnConnect');
-                const spinner = document.getElementById('connectSpinner');
-                const btnText = btn.querySelector('.btn-text');
-
-                btnText.style.display = 'none';
-                spinner.style.display = 'block';
-                btn.disabled = true;
-
-                try {
-                    // Pequeña espera para asegurar inyección
-                    await new Promise(r => setTimeout(r, 300));
-
-                    if (await freighter.isConnected()) {
-                        const key = await freighter.getPublicKey();
-                        updateWalletUI(key);
-                    } else {
-                        // Fallback a modo dev si no hay extensión
-                        if (confirm("Freighter no detectada. ¿Quieres usar el modo de prueba (solo lectura)?")) {
-                            activarModoDev();
-                        }
-                    }
-                } catch (e) {
-                    console.error(e);
-                    showToast("Error al conectar: " + e.message, 'error');
-                } finally {
-                    spinner.style.display = 'none';
-                    btnText.style.display = 'block';
-                    btn.disabled = false;
-                }
-            };
+            console.log("✅ Librería Stellar lista para Passkey Wallet");
 
             // --- COMPRA ---
             window.iniciarCompra = async function (productId) {
-                if (!currentUser) return showToast("Conecta tu wallet primero", 'error');
-                if (isDevMode) return showToast("Modo desarrollo: No se pueden realizar pagos reales", 'info');
+                if (!currentUser || !currentWalletSecret) return showToast("Conecta tu wallet primero", 'error');
 
                 const product = PRODUCTS.find(p => p.id === productId);
                 if (!product) return;
@@ -1220,7 +1331,18 @@
 
                 try {
                     const server = new StellarSdk.Server("https://horizon-testnet.stellar.org");
-                    const source = await server.loadAccount(currentUser);
+                    const sourceKeypair = StellarSdk.Keypair.fromSecret(currentWalletSecret);
+                    
+                    let source;
+                    try {
+                        source = await server.loadAccount(currentUser);
+                    } catch (e) {
+                        if (e.response && e.response.status === 404) {
+                            showToast("La cuenta aún se está fondeando. Espera un momento y reintenta.", "error");
+                            return;
+                        }
+                        throw e;
+                    }
 
                     const tx = new StellarSdk.TransactionBuilder(source, {
                         fee: StellarSdk.BASE_FEE,
@@ -1235,8 +1357,10 @@
                         .setTimeout(30)
                         .build();
 
-                    const signedXdr = await freighter.signTransaction(tx.toXDR(), "TESTNET");
-                    const res = await server.submitTransaction(new StellarSdk.Transaction(signedXdr, StellarSdk.Networks.TESTNET));
+                    // FIRMAR CON LA LLAVE DE LA PASSKEY EN LUGAR DE FREIGHTER
+                    tx.sign(sourceKeypair);
+                    
+                    const res = await server.submitTransaction(tx);
 
                     console.log(res);
                     showToast(`¡Pago exitoso! Disfruta tus ${product.name}`, 'success');
@@ -1257,36 +1381,12 @@
                         errMsg += ` (${codesStr})`;
                     }
 
-                    if (e.response && e.response.status === 404) {
-                        showToast("⚠️ Tu cuenta no existe en Testnet. Abriendo Friendbot...", 'error');
-                        setTimeout(() => {
-                            window.open("https://laboratory.stellar.org/#account-creator?network=test", "_blank");
-                        }, 2000);
-                    } else {
-                        showToast("Error en el pago: " + errMsg, 'error');
-                    }
+                    showToast("Error en el pago: " + errMsg, 'error');
                 }
             };
-
-            // Auto-check al cargar
-            setTimeout(async () => {
-                if (await freighter.isConnected()) {
-                    // Opcional: Auto-conectar si ya tiene permisos (requiere guardar estado o probar getPublicKey)
-                    // Por ahora solo dejamos listo el botón
-                    console.log("Freighter detectada y lista");
-                }
-            }, 500);
-
         } catch (err) {
             console.error("Error cargando librería:", err);
             showToast("Error cargando sistema de pagos", 'error');
-        }
-
-        function activarModoDev() {
-            isDevMode = true;
-            document.getElementById('devModeBanner').style.display = 'block';
-            // Wallet de prueba
-            updateWalletUI("GBEYXY6EXA3Q3UQNW7TMBV34GT7D67EZ4NOKYDCDIK3EJLCCH7GB5TKY");
         }
     </script>
 </body>

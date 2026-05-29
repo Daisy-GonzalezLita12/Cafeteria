@@ -32,6 +32,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const CREDENTIALS_FILE = path.join(DATA_DIR, 'admin_credentials.json');
+const USER_CREDENTIALS_FILE = path.join(DATA_DIR, 'user_credentials.json');
 
 let expectedChallenge = '';
 let activeAdminToken = '';
@@ -127,8 +128,7 @@ http.createServer(async function (request, response) {
         attestationType: 'none',
         authenticatorSelection: {
           residentKey: 'required',
-          userVerification: 'discouraged',
-          authenticatorAttachment: 'platform',
+          userVerification: 'discouraged'
         },
       });
 
@@ -271,6 +271,163 @@ http.createServer(async function (request, response) {
       } else {
         response.writeHead(400, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ verified: false, error: 'Authentication signature invalid' }));
+      }
+    } catch (e) {
+      console.error(e);
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // GET /api/wallet/register-options
+  if (request.url === '/api/wallet/register-options' && request.method === 'GET') {
+    try {
+      const rpName = 'Coffee Tec Wallet';
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const options = await generateRegistrationOptions({
+        rpName,
+        rpID,
+        userID: new TextEncoder().encode('wallet-user-' + Date.now()),
+        userName: 'user@coffetec.com',
+        userDisplayName: 'Coffee Tec User',
+        attestationType: 'none',
+        authenticatorSelection: {
+          residentKey: 'required',
+          userVerification: 'discouraged'
+        },
+      });
+
+      expectedChallenge = options.challenge;
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(options));
+    } catch (e) {
+      console.error(e);
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // POST /api/wallet/register-verification
+  if (request.url === '/api/wallet/register-verification' && request.method === 'POST') {
+    try {
+      const body = await parseBody(request);
+      const userCredentials = readJson(USER_CREDENTIALS_FILE);
+
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
+      
+      const verification = await verifyRegistrationResponse({
+        response: body.passkeyResponse,
+        expectedChallenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        requireUserVerification: false,
+      });
+
+      const registrationInfo = verification.registrationInfo;
+      const credential = registrationInfo?.credential ?? registrationInfo;
+
+      if (verification.verified && credential && credential.id && credential.publicKey) {
+        const newCred = {
+          credentialID: credential.id,
+          credentialPublicKey: Buffer.from(credential.publicKey).toString('base64'),
+          counter: credential.counter || 0,
+          transports: body.passkeyResponse.response?.transports || [],
+          walletPublicKey: body.walletPublicKey,
+          walletSecretKey: body.walletSecretKey
+        };
+        userCredentials.push(newCred);
+        writeJson(USER_CREDENTIALS_FILE, userCredentials);
+
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ verified: true, publicKey: body.walletPublicKey, secretKey: body.walletSecretKey }));
+      } else {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ verified: false, error: 'Wallet verification failed' }));
+      }
+    } catch (e) {
+      console.error(e);
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // GET /api/wallet/login-options
+  if (request.url === '/api/wallet/login-options' && request.method === 'GET') {
+    try {
+      const userCredentials = readJson(USER_CREDENTIALS_FILE);
+      if (userCredentials.length === 0) {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'No wallet passkeys registered.' }));
+        return;
+      }
+
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const options = await generateAuthenticationOptions({
+        rpID,
+        userVerification: 'discouraged',
+      });
+
+      expectedChallenge = options.challenge;
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(options));
+    } catch (e) {
+      console.error(e);
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // POST /api/wallet/login-verification
+  if (request.url === '/api/wallet/login-verification' && request.method === 'POST') {
+    try {
+      const body = await parseBody(request);
+      const userCredentials = readJson(USER_CREDENTIALS_FILE);
+
+      const savedCred = userCredentials.find(cred => cred.credentialID === body.id);
+
+      if (!savedCred) {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ verified: false, error: 'Wallet credential not found' }));
+        return;
+      }
+
+      const host = request.headers.host || 'localhost:8000';
+      const rpID = host.split(':')[0];
+      const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
+      const verification = await verifyAuthenticationResponse({
+        response: body,
+        expectedChallenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        requireUserVerification: false,
+        credential: {
+          id: savedCred.credentialID,
+          publicKey: new Uint8Array(Buffer.from(savedCred.credentialPublicKey, 'base64')),
+          counter: savedCred.counter,
+        }
+      });
+
+      if (verification.verified) {
+        savedCred.counter = verification.authenticationInfo.newCounter;
+        writeJson(USER_CREDENTIALS_FILE, userCredentials);
+
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ 
+          verified: true, 
+          publicKey: savedCred.walletPublicKey, 
+          secretKey: savedCred.walletSecretKey 
+        }));
+      } else {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ verified: false, error: 'Wallet authentication signature invalid' }));
       }
     } catch (e) {
       console.error(e);
